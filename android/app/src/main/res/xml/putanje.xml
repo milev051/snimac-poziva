@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sopstveni i uvezeni snimci, za puštanje u drugoj aplikaciji i deljenje. -->
+<paths>
+    <external-files-path name="snimci" path="snimci/" />
+    <files-path name="snimci-interni" path="snimci/" />
+</paths>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Pozivi</string>
+    <string name="servis_naziv">Pozivi: snimanje poziva</string>
+    <string name="servis_opis">Kad poziv počne, uključuje mikrofon i snima, a kad se završi, čuva snimak u aplikaciji Pozivi. Ne čita sadržaj ekrana i ne šalje ništa dok ne izabereš prepis.</string>
+</resources>
