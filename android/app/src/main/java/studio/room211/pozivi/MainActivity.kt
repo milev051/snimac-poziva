@@ -10,13 +10,12 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -44,8 +43,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var azuriranjeDugme: MaterialButton
     private lateinit var azuriranjeTekst: TextView
     private var izdanje: Azuriranje.Izdanje? = null
-    private var samoInstaliranjePokusano = false
-    private val promena: () -> Unit = { runOnUiThread { osveziListu() } }
+    private lateinit var dnevnikTekst: TextView
+    private val promena: () -> Unit = { runOnUiThread { osveziListu(); osveziDnevnik() } }
 
     private val traziDozvole = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         osveziDozvole()
@@ -79,6 +78,7 @@ class MainActivity : AppCompatActivity() {
         koren.addView(karticaPoziva())
         koren.addView(karticaPodesavanja())
         koren.addView(karticaAzuriranja())
+        koren.addView(karticaDnevnika())
         setContentView(ScrollView(this).apply { addView(koren); isFillViewport = true })
 
         if (savedInstanceState == null) {
@@ -100,7 +100,8 @@ class MainActivity : AppCompatActivity() {
         osveziDozvole()
         osveziListu()
         skeniraj()
-        if (pod.proveravajAzuriranje) proveriAzuriranje(tiho = true)
+        osveziDnevnik()
+        proveriAzuriranje()
     }
 
     override fun onPause() {
@@ -155,7 +156,15 @@ class MainActivity : AppCompatActivity() {
             "Pristupačnost: Pozivi",
             "bez ovoga Android ne daje mikrofon tokom poziva. Ako je prekidač siv: Podešavanja → Aplikacije → Pozivi → ⋮ → Dozvoli ograničena podešavanja.",
         ) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        if (!Azuriranje.smeDaInstalira(this)) stavke += Triple("Instaliranje ažuriranja", "da nova verzija sa GitHub-a stigne sama") {
+        if (pod.snimajSam && !getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)) stavke += Triple(
+            "Baterija bez ograničenja",
+            "da Samsung ne uspava aplikaciju pa propusti početak poziva",
+        ) {
+            runCatching {
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+            }.onFailure { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        }
+        if (!Azuriranje.smeDaInstalira(this)) stavke += Triple("Instaliranje ažuriranja", "da dugme za ažuriranje može da instalira novu verziju") {
             startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
         }
         if (stavke.isEmpty()) return
@@ -301,34 +310,14 @@ class MainActivity : AppCompatActivity() {
             addView(kljuc)
         })
         s.addView(telo("Besplatan ključ se pravi na aistudio.google.com/apikey. Snimak ide Google-u samo kad izabereš prepis."))
-        val model = TextInputEditText(this).apply { setText(pod.model) }
-        s.addView(TextInputLayout(this).apply { hint = "Gemini model"; addView(model) })
         s.addView(dugme("Sačuvaj") {
             pod.geminiKljuc = kljuc.text?.toString().orEmpty()
-            pod.model = model.text?.toString().orEmpty()
             poruka("Sačuvano")
         })
 
         s.addView(prekidac("Snimaj pozive sam (mikrofon)", pod.snimajSam) { pod.snimajSam = it; osveziDozvole() })
         s.addView(telo("Mikrofon jasno čuje tebe, a sagovornika samo kad je uključen zvučnik. Ako telefon ima svoj snimač poziva, on snima oba smera i aplikacija njegove snimke pronalazi sama; tada ovo možeš isključiti."))
-        val izvori = listOf(
-            Podesavanja.IZVOR_MIKROFON to "Mikrofon",
-            Podesavanja.IZVOR_PREPOZNAVANJE to "Mikrofon bez obrade zvuka",
-            Podesavanja.IZVOR_POZIV to "Probaj oba smera (VOICE_CALL), pa mikrofon",
-        )
-        s.addView(RadioGroup(this).apply {
-            izvori.forEachIndexed { i, (kod, naziv) ->
-                addView(RadioButton(this@MainActivity).apply {
-                    id = View.generateViewId()
-                    text = naziv
-                    isChecked = pod.izvorZvuka == kod
-                    setOnCheckedChangeListener { _, c -> if (c) pod.izvorZvuka = izvori[i].first }
-                })
-            }
-        })
-        s.addView(prekidac("Prepiši nov snimak sam kad ima interneta", pod.automatskiPrepis) { pod.automatskiPrepis = it })
-        s.addView(prekidac("Prepisuj samo preko Wi-Fi mreže", pod.samoWifi) { pod.samoWifi = it })
-        s.addView(telo("Prepis se ne radi tokom poziva. Dugme „Prepiši“ radi i bez interneta: prepis čeka i kreće čim se veza vrati."))
+        s.addView(telo("Prepis kreće samo na dugme „Prepiši“ kod poziva. Bez interneta čeka i kreće čim se veza vrati."))
         return kartica
     }
 
@@ -338,15 +327,17 @@ class MainActivity : AppCompatActivity() {
         val (kartica, s) = kartica("Verzija i ažuriranje")
         azuriranjeTekst = telo("Instalirano: ${Azuriranje.trenutnaVerzija(this)}")
         s.addView(azuriranjeTekst)
-        azuriranjeDugme = dugme("Proveri ažuriranje") { izdanje?.let { instaliraj(it) } ?: proveriAzuriranje(tiho = false) }
+        azuriranjeDugme = dugme("Proveravam…") { izdanje?.let { instaliraj(it) } ?: proveriAzuriranje() }
+        azuriranjeDugme.isEnabled = false
         s.addView(azuriranjeDugme)
-        s.addView(prekidac("Proveravaj i instaliraj ažuriranja sam", pod.proveravajAzuriranje) { pod.proveravajAzuriranje = it })
         s.addView(telo("Izdanja: github.com/${Azuriranje.REPO}/releases"))
         return kartica
     }
 
-    private fun proveriAzuriranje(tiho: Boolean) {
-        if (!tiho) azuriranjeDugme.text = "Proveravam…"
+    /** Dugme je aktivno samo kad postoji novija verzija ili kad provera nije uspela. */
+    private fun proveriAzuriranje() {
+        azuriranjeDugme.isEnabled = false
+        azuriranjeDugme.text = "Proveravam…"
         thread {
             val r = runCatching { Azuriranje.poslednje() }
             runOnUiThread {
@@ -354,16 +345,47 @@ class MainActivity : AppCompatActivity() {
                     if (Azuriranje.novije(Azuriranje.trenutnaVerzija(this), it.oznaka)) {
                         izdanje = it
                         azuriranjeDugme.text = "Preuzmi i instaliraj ${it.oznaka}"
-                        if (tiho && !samoInstaliranjePokusano && Azuriranje.smeDaInstalira(this)) {
-                            samoInstaliranjePokusano = true
-                            instaliraj(it)
-                        }
+                        azuriranjeDugme.isEnabled = true
                     } else {
                         izdanje = null
-                        azuriranjeDugme.text = "Imaš najnoviju verziju (${Azuriranje.trenutnaVerzija(this)})"
+                        azuriranjeDugme.text = "Imaš najnoviju verziju"
                     }
-                }.onFailure { if (!tiho) azuriranjeDugme.text = "Provera nije uspela: ${it.message}" }
+                }.onFailure {
+                    izdanje = null
+                    azuriranjeDugme.text = "Provera nije uspela, probaj ponovo"
+                    azuriranjeDugme.isEnabled = true
+                }
             }
+        }
+    }
+
+    // ---------- dnevnik ----------
+
+    private fun karticaDnevnika(): View {
+        val (kartica, s) = kartica("Dnevnik snimanja")
+        s.addView(telo("Šta se dešavalo tokom poslednjih poziva, najnovije gore. Ako poziv nije snimljen, kopiraj ovo i pošalji."))
+        dnevnikTekst = TextView(this).apply {
+            setTextIsSelectable(true)
+            typeface = Typeface.MONOSPACE
+            textSize = 12f
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        s.addView(dnevnikTekst)
+        s.addView(red(
+            dugme("Kopiraj", tonal = true) {
+                getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Dnevnik", Dnevnik.procitaj(this)))
+                poruka("Kopirano")
+            },
+            dugme("Obriši", tonal = true) { Dnevnik.obrisi(this); osveziDnevnik() },
+        ))
+        return kartica
+    }
+
+    private fun osveziDnevnik() {
+        if (!::dnevnikTekst.isInitialized) return
+        dnevnikTekst.text = Dnevnik.procitaj(this).ifBlank {
+            if (pristupacnostUkljucena()) "Još nema zapisa. Pozovi nekoga, pa se vrati ovde."
+            else "Još nema zapisa. Pristupačnost → Pozivi nije uključena."
         }
     }
 
@@ -379,8 +401,8 @@ class MainActivity : AppCompatActivity() {
                 Azuriranje.instaliraj(this, apk)
             }
             runOnUiThread {
-                azuriranjeDugme.isEnabled = true
-                azuriranjeDugme.text = r.fold({ "Instaliram ${i.oznaka}…" }, { "Ažuriranje nije uspelo: ${it.message}" })
+                azuriranjeDugme.isEnabled = r.isFailure
+                azuriranjeDugme.text = r.fold({ "Instaliram ${i.oznaka}…" }, { "Ažuriranje nije uspelo, probaj ponovo" })
             }
         }
     }

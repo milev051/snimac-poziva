@@ -1,12 +1,13 @@
 # Pozivi (snimač i prepis poziva)
-_2026-10-21_
-- Napravljena Android aplikacija: sopstveno snimanje preko Pristupačnosti, sistemski snimci iz Recordings/Call, uvoz.
-- Prepis na zahtev preko Gemini-ja (Ja/Sagovornik, [mm:ss]), red čeka internet.
-- GitHub Actions pravi izdanje na svaki push; aplikacija se sama ažurira.
-- Ključ za potpis: ~/.config/snimac-poziva (i GitHub tajne).
+_2026-10-22_
+- Korisnik: sve dozvole date, ali dolazni pozivi nisu snimljeni (dva fajla, bez zvuka).
+- Snimanje: kreće 1 s posle javljanja, proba 4 izvora mikrofona i preskače izvor koji daje tišinu; VOICE_CALL uklonjen.
+- Dodata kartica „Dnevnik snimanja“ (kopiraj/obriši) i stavka „Baterija bez ograničenja“.
+- Uklonjeno: samoažuriranje, polje za Gemini model, samoprepis, prepis samo na Wi-Fi, izbor izvora zvuka.
+- Dugme za ažuriranje aktivno samo kad postoji novija verzija.
 Sledeće:
-1. Instalirati prvi APK na telefon i probati poziv sa i bez zvučnika.
-2. Proveriti da li Samsung na telefonu ima „Snimanje poziva“.
+1. Korisnik ažurira, uključi bateriju bez ograničenja, primi poziv i pošalje Dnevnik snimanja.
+2. Prema dnevniku: servis se ne pokreće, izvor odbijen ili svi izvori daju tišinu.
 Otvoreno:
-- Da li sopstveno snimanje dobija mikrofon tokom poziva na ovom telefonu (nije probano, telefon nije bio povezan).
-- Da li ažuriranje prolazi bez dodira (Android 12+, zavisi od sistema).
+- Da li Samsung na telefonu ima „Snimanje poziva“ (ako ima, to je najpouzdanije).
+- Ključ za potpis: ~/.config/snimac-poziva (i GitHub tajne).

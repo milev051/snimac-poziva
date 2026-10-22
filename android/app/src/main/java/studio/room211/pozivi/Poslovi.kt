@@ -6,7 +6,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -28,10 +27,9 @@ object Poslovi {
     /** Prepis čeka internet u redu poslova, pa dugme radi i bez mreže. */
     fun prepisi(context: Context, id: String) {
         Pozivi.izmeni(context, id) { it.copy(status = Poziv.STATUS_CEKA, greska = "") }
-        val mreza = if (Podesavanja(context).samoWifi) NetworkType.UNMETERED else NetworkType.CONNECTED
         val posao = OneTimeWorkRequestBuilder<PrepisPosao>()
             .setInputData(workDataOf("id" to id))
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(mreza).build())
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork("prepis-$id", ExistingWorkPolicy.REPLACE, posao)
@@ -42,7 +40,7 @@ object Poslovi {
         Pozivi.izmeni(context, id) { if (it.status == Poziv.STATUS_GOTOVO) it else it.copy(status = Poziv.STATUS_NIJE) }
     }
 
-    /** Svakog sata: novi sistemski snimci i provera ažuriranja. */
+    /** Svakog sata: novi sistemski snimci. */
     fun zakaziOdrzavanje(context: Context) {
         val posao = PeriodicWorkRequestBuilder<OdrzavanjePosao>(1, TimeUnit.HOURS).build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(ODRZAVANJE, ExistingPeriodicWorkPolicy.KEEP, posao)
@@ -51,29 +49,18 @@ object Poslovi {
     fun skenirajUskoro(context: Context) {
         val posao = OneTimeWorkRequestBuilder<OdrzavanjePosao>()
             .setInitialDelay(15, TimeUnit.SECONDS)
-            .setInputData(workDataOf("samoSken" to true))
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork("sken", ExistingWorkPolicy.REPLACE, posao)
     }
 
-    /** Novi sistemski snimci; samoprepis samo za skorašnje, da stari ne potroše kvotu. */
-    fun skeniraj(context: Context): List<Poziv> {
-        val novi = Pozivi.dodaj(context, SistemskiSnimci.pronadji(context))
-        if (Podesavanja(context).automatskiPrepis) {
-            val granica = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1)
-            novi.filter { it.vreme > granica }.forEach { prepisi(context, it.id) }
-        }
-        return novi
-    }
+    /** Novi sistemski snimci idu na spisak; prepis kreće samo na dugme. */
+    fun skeniraj(context: Context): List<Poziv> =
+        Pozivi.dodaj(context, SistemskiSnimci.pronadji(context))
 }
 
 class OdrzavanjePosao(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result {
         Poslovi.skeniraj(applicationContext)
-        if (!inputData.getBoolean("samoSken", false)) {
-            runCatching { Azuriranje.proveriUPozadini(applicationContext) }
-                .onFailure { Log.w("Odrzavanje", "Ažuriranje: ${it.message}") }
-        }
         return Result.success()
     }
 }
@@ -87,8 +74,7 @@ class PrepisPosao(context: Context, params: WorkerParameters) : Worker(context, 
         val privremeni = mutableListOf<File>()
         return try {
             val (zvuk, mime) = pripremi(ctx, Uri.parse(poziv.uri), privremeni)
-            val p = Podesavanja(ctx)
-            val tekst = Gemini.prepisi(p.geminiKljuc, p.model, zvuk, mime)
+            val tekst = Gemini.prepisi(Podesavanja(ctx).geminiKljuc, Gemini.PODRAZUMEVANI_MODEL, zvuk, mime)
             Pozivi.izmeni(ctx, id) { it.copy(status = Poziv.STATUS_GOTOVO, tekst = tekst, greska = "") }
             javi(ctx, poziv, "Prepis je gotov")
             Result.success()

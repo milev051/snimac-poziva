@@ -16,14 +16,12 @@ import java.net.URL
 
 /**
  * Ažuriranje iz GitHub izdanja. Svaki push na main pravi novo izdanje
- * (.github/workflows/izdanje.yml), a aplikacija ga sama nađe, preuzme i
- * instalira. Od Androida 12 aplikacija koja ažurira samu sebe ne traži
- * potvrdu; stariji sistem i prva instalacija traže jedan dodir.
+ * (.github/workflows/izdanje.yml). Aplikacija pri otvaranju proveri ima li
+ * novije verzije, a preuzima je i instalira tek na dugme.
  */
 object Azuriranje {
     const val REPO = "milev051/snimac-poziva"
     private const val IZDANJA = "https://api.github.com/repos/$REPO/releases/latest"
-    private const val RAZMAK_PROVERE = 6L * 60 * 60 * 1000
 
     data class Izdanje(val oznaka: String, val naslov: String, val adresaApk: String)
 
@@ -132,22 +130,6 @@ object Azuriranje {
             )
             sesija.commit(povratak.intentSender)
         }
-    }
-
-    /** Iz pozadinskog posla: najviše jednom u 6 sati, sve bez dodira ako sistem dozvoli. */
-    fun proveriUPozadini(context: Context) {
-        val p = Podesavanja(context)
-        if (!p.proveravajAzuriranje) return
-        if (System.currentTimeMillis() - p.poslednjaProveraAzuriranja < RAZMAK_PROVERE) return
-        val izdanje = poslednje()
-        p.poslednjaProveraAzuriranja = System.currentTimeMillis()
-        if (!novije(trenutnaVerzija(context), izdanje.oznaka)) return
-        if (!smeDaInstalira(context)) {
-            javi(context, "Nova verzija ${izdanje.oznaka}", "Otvori aplikaciju i dozvoli instaliranje ažuriranja.",
-                Intent(context, MainActivity::class.java))
-            return
-        }
-        instaliraj(context, preuzmi(context, izdanje.adresaApk))
     }
 
     fun javi(context: Context, naslov: String, tekst: String, akcija: Intent) {

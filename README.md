@@ -3,7 +3,7 @@
 > **English:** Android app that records phone calls and, on demand, transcribes
 > them with Gemini (speaker-labelled, offline-queued). It also picks up the
 > phone's own call recordings. Every push to `main` builds a signed APK on
-> GitHub Actions, and the app updates itself from GitHub Releases.
+> GitHub Actions; the app offers the update from GitHub Releases.
 
 Snima telefonske pozive i prepisuje ih u tekst kad to izabereš.
 
@@ -16,18 +16,20 @@ Snima telefonske pozive i prepisuje ih u tekst kad to izabereš.
 | **Uvoz** („Dodaj snimak“ ili Podeli → Pozivi) | šta god je na snimku | — |
 
 Android od verzije 10 aplikacijama van sistema ne daje zvuk poziva
-(`VOICE_CALL`), pa ni oba smera kao **zasebne trake**. Opcija „Probaj oba
-smera“ to ipak pokuša i prelazi na mikrofon ako sistem odbije. Govornike
-zato razdvaja Gemini, po glasu: `Ja:` i `Sagovornik:`, uz vreme `[mm:ss]`.
+(`VOICE_CALL`), pa ni oba smera kao **zasebne trake**. Govornike zato
+razdvaja Gemini, po glasu: `Ja:` i `Sagovornik:`, uz vreme `[mm:ss]`.
+
+Sopstveno snimanje kreće sekundu posle javljanja i proba izvore redom:
+mikrofon, mikrofon bez obrade, mikrofon kamere, mikrofon za razgovor. Izvor
+koji 4 sekunde daje samo nule (Android utišava mikrofon) zamenjuje sledeći.
+Sve to se upisuje u karticu **Dnevnik snimanja** u aplikaciji.
 
 ## Prepis
 
 - Ne radi se tokom poziva. Dugme **Prepiši** na svakom pozivu; bez interneta
   prepis čeka u redu i kreće čim se veza vrati (WorkManager).
-- Opciono: sam prepiši nov snimak (samo snimci mlađi od dana, da stari ne
-  potroše kvotu) i samo preko Wi-Fi mreže.
 - Treba **Gemini API ključ** (besplatan: aistudio.google.com/apikey), upisuje se u
-  aplikaciji. Model je podesiv, podrazumevano `gemini-flash-latest`.
+  aplikaciji. Model je stalan: `gemini-flash-latest`.
 - m4a/amr se pre slanja pretvaraju u WAV 16 kHz mono; veći od 14 MB idu preko
   Files API-ja.
 
@@ -35,9 +37,8 @@ zato razdvaja Gemini, po glasu: `Ja:` i `Sagovornik:`, uz vreme `[mm:ss]`.
 
 Svaki push na `main` koji menja `android/` pokreće `.github/workflows/izdanje.yml`:
 testovi, APK potpisan stalnim ključem, izdanje `v1.<broj>` na GitHub-u.
-Aplikacija proverava izdanja pri otvaranju i u pozadini svakih 6 sati, preuzme
-APK i instalira ga kroz PackageInstaller. Na Androidu 12+ ažuriranje ide bez
-dodira; ako sistem ipak traži potvrdu, stiže obaveštenje.
+Aplikacija pri otvaranju proveri izdanja. Dugme „Preuzmi i instaliraj“ je
+aktivno samo kad postoji novija verzija; samo ažuriranje ne postoji.
 
 Ključ za potpis je van repoa: `~/.config/snimac-poziva/` (lokalno) i tajne
 `POTPIS_BASE64`, `POTPIS_LOZINKA` na GitHub-u. **Ako se ključ izgubi, telefon

@@ -12,7 +12,6 @@ import android.provider.CallLog
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
-import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import java.io.File
 import java.text.SimpleDateFormat
@@ -32,9 +31,13 @@ class SnimacServis : AccessibilityService() {
     private var snimac: MediaRecorder? = null
     private var fajl: File? = null
     private var pocetak = 0L
+    private var izvorIndeks = 0
+    private var najjace = 0
+    private var merenja = 0
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        Dnevnik.upisi(this, "Servis pristupačnosti je pokrenut")
         Obavestenja.kanali(this)
         pratiPozive()
         Poslovi.zakaziOdrzavanje(this)
@@ -44,6 +47,8 @@ class SnimacServis : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        Dnevnik.upisi(this, "Servis pristupačnosti je zaustavljen")
+        glavna.removeCallbacks(pokreni)
         zavrsi()
         prestaniPracenje()
         super.onDestroy()
@@ -51,7 +56,7 @@ class SnimacServis : AccessibilityService() {
 
     private fun pratiPozive() {
         if (checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "Nema dozvole za stanje poziva")
+            Dnevnik.upisi(this, "Nema dozvole za stanje telefona, pozivi se ne prate")
             return
         }
         val tm = getSystemService(TelephonyManager::class.java) ?: return
@@ -88,22 +93,43 @@ class SnimacServis : AccessibilityService() {
 
     private fun promena(stanje: Int) {
         when (stanje) {
-            TelephonyManager.CALL_STATE_OFFHOOK -> if (Podesavanja(this).snimajSam) pocni()
+            TelephonyManager.CALL_STATE_RINGING -> Dnevnik.upisi(this, "Poziv zvoni")
+            TelephonyManager.CALL_STATE_OFFHOOK -> {
+                if (pocetak != 0L) return
+                pocetak = System.currentTimeMillis()
+                if (!Podesavanja(this).snimajSam) {
+                    Dnevnik.upisi(this, "Poziv počeo; snimanje u aplikaciji je isključeno")
+                    return
+                }
+                Dnevnik.upisi(this, "Poziv počeo")
+                // Telefon prvo prebaci zvuk na slušalicu; snimač pokrenut odmah
+                // na nekim Samsungovim modelima dobija samo tišinu.
+                glavna.postDelayed(pokreni, 1_000)
+            }
             TelephonyManager.CALL_STATE_IDLE -> {
+                glavna.removeCallbacks(pokreni)
+                if (pocetak != 0L) Dnevnik.upisi(this, "Poziv završen")
                 zavrsi()
+                pocetak = 0L
                 // Sistemski snimač upisuje fajl par sekundi posle kraja poziva.
                 Poslovi.skenirajUskoro(this)
             }
         }
     }
 
-    private fun pocni() {
+    private val pokreni = Runnable { pocni(0) }
+
+    /** Pokreće snimač sa prvim izvorom zvuka koji radi, počevši od izvora [od]. */
+    private fun pocni(od: Int) {
         if (snimac != null) return
-        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Dnevnik.upisi(this, "Nema dozvole za mikrofon, poziv se ne snima")
+            return
+        }
         val folder = folderSnimaka(this).apply { mkdirs() }
-        val ime = "poziv_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".aac"
-        val izlaz = File(folder, ime)
-        for (izvor in Podesavanja.audioIzvori(Podesavanja(this).izvorZvuka)) {
+        for (i in od until IZVORI.size) {
+            val (izvor, naziv) = IZVORI[i]
+            val izlaz = File(folder, "poziv_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(pocetak)) + "_$i.aac")
             val r = MediaRecorder(this)
             try {
                 r.setAudioSource(izvor)
@@ -115,21 +141,62 @@ class SnimacServis : AccessibilityService() {
                 r.setOutputFile(izlaz.absolutePath)
                 r.prepare()
                 r.start()
+                r.maxAmplitude // prvo čitanje samo nulira merenje
                 snimac = r
                 fajl = izlaz
-                pocetak = System.currentTimeMillis()
+                izvorIndeks = i
+                najjace = 0
+                merenja = 0
                 prikaziObavestenje()
-                Log.i(TAG, "Snimanje počelo, izvor $izvor")
+                Dnevnik.upisi(this, "Snimanje počelo: $naziv")
+                glavna.postDelayed(meri, 500)
                 return
             } catch (e: Exception) {
-                Log.w(TAG, "Izvor $izvor nije dostupan: ${e.message}")
+                Dnevnik.upisi(this, "$naziv nije dostupan: ${e.message ?: e.javaClass.simpleName}")
                 runCatching { r.release() }
                 izlaz.delete()
             }
         }
+        Dnevnik.upisi(this, "Nijedan izvor zvuka nije pokrenut, poziv se ne snima")
+    }
+
+    /**
+     * Android tokom poziva često daje aplikaciji samo nule umesto zvuka.
+     * Ako izvor posle 4 sekunde nije dao ni šum, probava se sledeći.
+     */
+    private val meri: Runnable = object : Runnable {
+        override fun run() {
+            val r = snimac ?: return
+            najjace = maxOf(najjace, runCatching { r.maxAmplitude }.getOrDefault(0))
+            merenja++
+            if (merenja == 8 && najjace == 0) {
+                val naziv = IZVORI[izvorIndeks].second
+                if (izvorIndeks + 1 < IZVORI.size) {
+                    Dnevnik.upisi(this@SnimacServis, "$naziv daje samo tišinu, probam sledeći izvor")
+                    val sledeci = izvorIndeks + 1
+                    odbaci()
+                    pocni(sledeci)
+                    return
+                }
+                Dnevnik.upisi(this@SnimacServis, "Svi izvori daju tišinu: telefon ne pušta mikrofon aplikacijama tokom poziva")
+            }
+            glavna.postDelayed(this, 500)
+        }
+    }
+
+    /** Zaustavlja snimač i briše fajl, bez upisa u spisak poziva. */
+    private fun odbaci() {
+        glavna.removeCallbacks(meri)
+        val r = snimac ?: return
+        snimac = null
+        runCatching { r.stop() }
+        runCatching { r.release() }
+        fajl?.delete()
+        fajl = null
     }
 
     private fun zavrsi() {
+        glavna.removeCallbacks(meri)
         val r = snimac ?: return
         snimac = null
         val f = fajl
@@ -139,9 +206,12 @@ class SnimacServis : AccessibilityService() {
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         if (f == null) return
         if (!ispravno || f.length() < 2_000) {
+            Dnevnik.upisi(this, "Snimak je prazan (${f.length()} B), obrisan")
             f.delete()
             return
         }
+        Dnevnik.upisi(this, "Snimak sačuvan: ${f.length() / 1024} KB, najjači zvuk $najjace" +
+            if (najjace == 0) " (tišina)" else "")
         val trajanje = System.currentTimeMillis() - pocetak
         val vreme = pocetak
         // Dnevnik poziva dobije novi red tek posle kraja poziva.
@@ -155,7 +225,6 @@ class SnimacServis : AccessibilityService() {
                 izvor = Poziv.IZVOR_APLIKACIJA,
             )
             Pozivi.dodaj(this, listOf(poziv))
-            if (Podesavanja(this).automatskiPrepis) Poslovi.prepisi(this, poziv.id)
         }, 2_500)
     }
 
@@ -189,11 +258,22 @@ class SnimacServis : AccessibilityService() {
             } else {
                 startForeground(Obavestenja.ID_SNIMANJE, n)
             }
-        }.onFailure { Log.w(TAG, "Obaveštenje o snimanju: ${it.message}") }
+        }.onFailure { Dnevnik.upisi(this, "Obaveštenje o snimanju nije prikazano: ${it.message}") }
     }
 
     companion object {
-        private const val TAG = "SnimacServis"
+        /**
+         * Redosled izvora: VOICE_CALL se ne nudi jer ga Android daje samo
+         * sistemskim aplikacijama, a na nekim telefonima „uspe“ i snima tišinu.
+         * VOICE_COMMUNICATION je poslednji jer poništavanje eha briše
+         * sagovornika sa zvučnika.
+         */
+        private val IZVORI = listOf(
+            MediaRecorder.AudioSource.MIC to "Mikrofon",
+            MediaRecorder.AudioSource.VOICE_RECOGNITION to "Mikrofon bez obrade",
+            MediaRecorder.AudioSource.CAMCORDER to "Mikrofon kamere",
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION to "Mikrofon za razgovor",
+        )
         fun folderSnimaka(context: android.content.Context) =
             File(context.getExternalFilesDir(null) ?: context.filesDir, "snimci")
     }

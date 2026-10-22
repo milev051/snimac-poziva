@@ -137,7 +137,7 @@ object Gemini {
         return when (kod) {
             400 -> "Gemini je odbio zahtev: ${poruka.ifBlank { "HTTP 400" }}"
             401, 403 -> "Gemini ključ nije ispravan ili nema dozvolu."
-            404 -> "Model nije pronađen. Proveri naziv modela u podešavanjima."
+            404 -> "Gemini model nije pronađen; potrebno je ažuriranje aplikacije."
             429 -> "Gemini kvota je potrošena; prepis će biti ponovljen kasnije."
             else -> "Gemini greška HTTP $kod${if (poruka.isNotBlank()) ": $poruka" else ""}"
         }
