@@ -4,7 +4,10 @@ import android.accessibilityservice.AccessibilityService
 import android.app.Notification
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -17,6 +20,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.concurrent.thread
+import kotlin.math.abs
 
 /**
  * Snima pozive. Android od verzije 10 ne daje mikrofon aplikaciji van sistema
@@ -28,11 +33,13 @@ class SnimacServis : AccessibilityService() {
     private val glavna = Handler(Looper.getMainLooper())
     private var telefon: TelephonyManager? = null
     private var povratni: Any? = null
-    private var snimac: MediaRecorder? = null
+    private var snimac: AudioRecord? = null
+    private var nit: Thread? = null
+    @Volatile private var radi = false
     private var fajl: File? = null
     private var pocetak = 0L
     private var izvorIndeks = 0
-    private var najjace = 0
+    @Volatile private var najjace = 0
     private var merenja = 0
     private var izvori = MIKROFONI
 
@@ -126,37 +133,65 @@ class SnimacServis : AccessibilityService() {
             return
         }
         val folder = folderSnimaka(this).apply { mkdirs() }
+        val bafer = maxOf(AudioRecord.getMinBufferSize(HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), HZ) * 2
         for (i in od until izvori.size) {
             val (izvor, naziv) = izvori[i]
-            val izlaz = File(folder, "poziv_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(pocetak)) + "_$i.aac")
-            val r = MediaRecorder(this)
+            val izlaz = File(folder, "poziv_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(pocetak)) + "_$i.wav")
+            var r: AudioRecord? = null
             try {
-                r.setAudioSource(izvor)
-                r.setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS)
-                r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                r.setAudioChannels(1)
-                r.setAudioSamplingRate(16_000)
-                r.setAudioEncodingBitRate(32_000)
-                r.setOutputFile(izlaz.absolutePath)
-                r.prepare()
-                r.start()
-                r.maxAmplitude // prvo čitanje samo nulira merenje
+                r = AudioRecord(izvor, HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bafer)
+                check(r.state == AudioRecord.STATE_INITIALIZED) { "nije inicijalizovan" }
+                // Sistemsko izjednačavanje glasnoće, gde ga telefon ima.
+                if (AutomaticGainControl.isAvailable()) runCatching { AutomaticGainControl.create(r.audioSessionId)?.enabled = true }
+                r.startRecording()
+                check(r.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "odbijen" }
                 snimac = r
                 fajl = izlaz
                 izvorIndeks = i
                 najjace = 0
                 merenja = 0
+                radi = true
+                nit = Thread({ upisuj(r, izlaz) }, "snimanje").apply { start() }
                 Dnevnik.upisi(this, "Snimanje počelo: $naziv")
                 glavna.postDelayed(meri, 500)
                 return
             } catch (e: Exception) {
                 Dnevnik.upisi(this, "$naziv nije dostupan: ${e.message ?: e.javaClass.simpleName}")
-                runCatching { r.release() }
+                runCatching { r?.release() }
                 izlaz.delete()
             }
         }
         Dnevnik.upisi(this, "Nijedan izvor zvuka nije pokrenut, poziv se ne snima")
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+    }
+
+    /** Sirov zvuk ide u fajl iza praznog WAV zaglavlja; zaglavlje se upiše na kraju. */
+    private fun upisuj(r: AudioRecord, izlaz: File) {
+        val uzorci = ShortArray(HZ / 10)
+        izlaz.outputStream().buffered(64 * 1024).use { out ->
+            out.write(ByteArray(44))
+            while (radi) {
+                val n = r.read(uzorci, 0, uzorci.size)
+                if (n <= 0) { if (n < 0) break else continue }
+                var vrh = 0
+                for (k in 0 until n) vrh = maxOf(vrh, abs(uzorci[k].toInt()))
+                if (vrh > najjace) najjace = vrh
+                out.write(Pojacanje.uBajtove(uzorci, n))
+            }
+        }
+    }
+
+    /** Zaustavlja nit i snimač; fajl ostaje na disku. */
+    private fun zaustavi(): Boolean {
+        glavna.removeCallbacks(meri)
+        val r = snimac ?: return false
+        snimac = null
+        radi = false
+        runCatching { r.stop() }
+        runCatching { nit?.join(2_000) }
+        nit = null
+        runCatching { r.release() }
+        return true
     }
 
     /**
@@ -165,8 +200,7 @@ class SnimacServis : AccessibilityService() {
      */
     private val meri: Runnable = object : Runnable {
         override fun run() {
-            val r = snimac ?: return
-            najjace = maxOf(najjace, runCatching { r.maxAmplitude }.getOrDefault(0))
+            if (snimac == null) return
             merenja++
             if (merenja == 6 && najjace == 0) {
                 val naziv = izvori[izvorIndeks].second
@@ -185,46 +219,43 @@ class SnimacServis : AccessibilityService() {
 
     /** Zaustavlja snimač i briše fajl, bez upisa u spisak poziva. */
     private fun odbaci() {
-        glavna.removeCallbacks(meri)
-        val r = snimac ?: return
-        snimac = null
-        runCatching { r.stop() }
-        runCatching { r.release() }
+        zaustavi()
         fajl?.delete()
         fajl = null
     }
 
     private fun zavrsi() {
-        glavna.removeCallbacks(meri)
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
-        val r = snimac ?: return
-        snimac = null
-        val f = fajl
+        if (!zaustavi()) return
+        val f = fajl ?: return
         fajl = null
-        val ispravno = runCatching { r.stop() }.isSuccess
-        runCatching { r.release() }
-        if (f == null) return
-        if (!ispravno || f.length() < 2_000) {
+        if (f.length() < 16_000) {
             Dnevnik.upisi(this, "Snimak je prazan (${f.length()} B), obrisan")
             f.delete()
             return
         }
-        Dnevnik.upisi(this, "Snimak sačuvan: ${f.length() / 1024} KB, najjači zvuk $najjace" +
-            if (najjace == 0) " (tišina)" else "")
         val trajanje = System.currentTimeMillis() - pocetak
         val vreme = pocetak
-        // Dnevnik poziva dobije novi red tek posle kraja poziva.
-        glavna.postDelayed({
-            val poziv = Poziv(
-                id = "app:${f.name}",
-                uri = android.net.Uri.fromFile(f).toString(),
-                naziv = sagovornik(vreme) ?: "Poziv",
-                vreme = vreme,
-                trajanjeMs = trajanje,
-                izvor = Poziv.IZVOR_APLIKACIJA,
-            )
-            Pozivi.dodaj(this, listOf(poziv))
-        }, 2_500)
+        val vrh = najjace
+        thread(name = "pojacanje") {
+            val k = runCatching { Pojacanje.obradi(f, HZ) }
+                .onFailure { Dnevnik.upisi(this, "Pojačanje nije uspelo: ${it.message}") }
+                .getOrDefault(1f)
+            Dnevnik.upisi(this, "Snimak sačuvan: ${f.length() / 1024} KB, najjači zvuk $vrh" +
+                (if (vrh == 0) " (tišina)" else "") + ", pojačano ${"%.1f".format(Locale.US, k)}×")
+            // Dnevnik poziva dobije novi red tek posle kraja poziva.
+            glavna.postDelayed({
+                val poziv = Poziv(
+                    id = "app:${f.name}",
+                    uri = android.net.Uri.fromFile(f).toString(),
+                    naziv = sagovornik(vreme) ?: "Poziv",
+                    vreme = vreme,
+                    trajanjeMs = trajanje,
+                    izvor = Poziv.IZVOR_APLIKACIJA,
+                )
+                Pozivi.dodaj(this, listOf(poziv))
+            }, 2_500)
+        }
     }
 
     /** Ime ili broj iz dnevnika poziva, ako je dozvola data. */
@@ -279,6 +310,7 @@ class SnimacServis : AccessibilityService() {
             MediaRecorder.AudioSource.CAMCORDER to "Mikrofon kamere",
             MediaRecorder.AudioSource.VOICE_COMMUNICATION to "Mikrofon za razgovor",
         )
+        private const val HZ = 16_000
         fun folderSnimaka(context: android.content.Context) =
             File(context.getExternalFilesDir(null) ?: context.filesDir, "snimci")
     }

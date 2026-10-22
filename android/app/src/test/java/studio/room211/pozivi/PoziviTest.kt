@@ -65,4 +65,17 @@ class PoziviTest {
         assertEquals("RIFF", String(z, 0, 4))
         assertEquals(44, z.size)
     }
+
+    @Test
+    fun pojacanjeTihogSnimka() {
+        val h = IntArray(32_769)
+        h[1000] = 9_990; h[30_000] = 10
+        assertEquals(1000, Pojacanje.vrh(h))
+        assertEquals(Pojacanje.NAJVISE, Pojacanje.faktor(100))
+        assertEquals(1f, Pojacanje.faktor(32_000))
+        assertEquals(2000.toShort(), Pojacanje.primeni(1000, 2f))
+        val glasno = Pojacanje.primeni(20_000, 24f)
+        assertTrue(glasno in 26_000..32_767)
+        assertTrue(Pojacanje.primeni((-20_000).toShort(), 24f) <= -26_000)
+    }
 }

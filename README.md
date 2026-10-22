@@ -32,6 +32,11 @@ koji 3 sekunde daje samo nule zamenjuje sledeći. Kad nema zasebnih traka,
 govornike razdvaja Gemini, po glasu: `Ja:` i `Sagovornik:`, uz vreme `[mm:ss]`.
 Sve to se upisuje u karticu **Dnevnik snimanja** u aplikaciji.
 
+Sopstveni snimak je WAV, 16 kHz mono (oko 2 MB po minutu), preko
+`AudioRecord` sa sistemskim izjednačavanjem glasnoće gde postoji. Posle
+poziva se pojača do 24× tako da glasni delovi budu blizu punog nivoa
+(odlučuje 99,9. percentil, ne pojedinačni pucketi), a vrhovi se meko seku.
+
 ## Prepis
 
 - Ne radi se tokom poziva. Dugme **Prepiši** na svakom pozivu; bez interneta
