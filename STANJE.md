@@ -1,13 +1,10 @@
-# Pozivi (snimač i prepis poziva)
+# Stanje
 _2026-10-22_
-- Korisnik: sve dozvole date, ali dolazni pozivi nisu snimljeni (dva fajla, bez zvuka).
-- Snimanje: kreće 1 s posle javljanja, proba 4 izvora mikrofona i preskače izvor koji daje tišinu; VOICE_CALL uklonjen.
-- Dodata kartica „Dnevnik snimanja“ (kopiraj/obriši) i stavka „Baterija bez ograničenja“.
-- Uklonjeno: samoažuriranje, polje za Gemini model, samoprepis, prepis samo na Wi-Fi, izbor izvora zvuka.
-- Dugme za ažuriranje aktivno samo kad postoji novija verzija.
-Sledeće:
-1. Korisnik ažurira, uključi bateriju bez ograničenja, primi poziv i pošalje Dnevnik snimanja.
-2. Prema dnevniku: servis se ne pokreće, izvor odbijen ili svi izvori daju tišinu.
-Otvoreno:
-- Da li Samsung na telefonu ima „Snimanje poziva“ (ako ima, to je najpouzdanije).
-- Ključ za potpis: ~/.config/snimac-poziva (i GitHub tajne).
+Cilj: Android aplikacija „Pozivi“ za snimanje poziva i prepis preko Geminija.
+Urađeno (1.3): snimanje kreće odmah na početku poziva (bez kašnjenja od 1 s), obaveštenje se pokazuje odmah.
+Urađeno (1.3): izbor „Način snimanja“: zvuk poziva iz telefona (VOICE_CALL, VOICE_DOWNLINK) pa mikrofon; samo mikrofon; samo ugrađeno snimanje telefona. Dugme za podešavanja poziva u Telefonu.
+Tišina se prepoznaje posle 3 s (ranije 4 s) i prelazi se na sledeći izvor.
+Ranije (1.2): dnevnik snimanja, dugme za ažuriranje samo kad ima novije verzije, uklonjene suvišne opcije.
+Sledeći korak: korisnik instalira novu verziju, primi poziv i pošalje „Dnevnik snimanja“.
+Otvoreno: da li VOICE_CALL na korisnikovom Samsungu daje zvuk ili tišinu; da li servis pristupačnosti hvata početak poziva.
+Putanje: android/app/src/main/java/studio/room211/pozivi/SnimacServis.kt, Podesavanja.kt, MainActivity.kt

@@ -15,13 +15,21 @@ Snima telefonske pozive i prepisuje ih u tekst kad to izabereš.
 | **Sopstveno snimanje** (servis pristupačnosti) | tebe jasno, sagovornika samo na zvučniku | uključena Pristupačnost → Pozivi |
 | **Uvoz** („Dodaj snimak“ ili Podeli → Pozivi) | šta god je na snimku | — |
 
-Android od verzije 10 aplikacijama van sistema ne daje zvuk poziva
-(`VOICE_CALL`), pa ni oba smera kao **zasebne trake**. Govornike zato
-razdvaja Gemini, po glasu: `Ja:` i `Sagovornik:`, uz vreme `[mm:ss]`.
+U podešavanjima biraš **način snimanja**:
 
-Sopstveno snimanje kreće sekundu posle javljanja i proba izvore redom:
-mikrofon, mikrofon bez obrade, mikrofon kamere, mikrofon za razgovor. Izvor
-koji 4 sekunde daje samo nule (Android utišava mikrofon) zamenjuje sledeći.
+- **Zvuk poziva iz telefona, pa mikrofon** (podrazumevano): prvo `VOICE_CALL`
+  (oba smera) i `VOICE_DOWNLINK` (sagovornik). Android ih zvanično daje samo
+  sistemskim aplikacijama, pa na većini telefona ne rade ili daju tišinu;
+  tada snimanje samo pređe na mikrofon.
+- **Samo mikrofon**: mikrofon, mikrofon bez obrade, mikrofon kamere,
+  mikrofon za razgovor.
+- **Samo ugrađeno snimanje telefona**: aplikacija ne snima, nego pronalazi
+  snimke telefonskog snimača. Dugme „Otvori podešavanja poziva u Telefonu“
+  vodi do mesta gde se on uključuje.
+
+Snimanje kreće odmah kad poziv počne (javljanje ili biranje broja). Izvor
+koji 3 sekunde daje samo nule zamenjuje sledeći. Kad nema zasebnih traka,
+govornike razdvaja Gemini, po glasu: `Ja:` i `Sagovornik:`, uz vreme `[mm:ss]`.
 Sve to se upisuje u karticu **Dnevnik snimanja** u aplikaciji.
 
 ## Prepis

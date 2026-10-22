@@ -34,6 +34,7 @@ class SnimacServis : AccessibilityService() {
     private var izvorIndeks = 0
     private var najjace = 0
     private var merenja = 0
+    private var izvori = MIKROFONI
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -48,7 +49,6 @@ class SnimacServis : AccessibilityService() {
 
     override fun onDestroy() {
         Dnevnik.upisi(this, "Servis pristupačnosti je zaustavljen")
-        glavna.removeCallbacks(pokreni)
         zavrsi()
         prestaniPracenje()
         super.onDestroy()
@@ -97,17 +97,18 @@ class SnimacServis : AccessibilityService() {
             TelephonyManager.CALL_STATE_OFFHOOK -> {
                 if (pocetak != 0L) return
                 pocetak = System.currentTimeMillis()
-                if (!Podesavanja(this).snimajSam) {
-                    Dnevnik.upisi(this, "Poziv počeo; snimanje u aplikaciji je isključeno")
+                val nacin = Podesavanja(this).nacin
+                if (nacin == Podesavanja.NACIN_TELEFON) {
+                    Dnevnik.upisi(this, "Poziv počeo; snima ugrađeni snimač telefona")
                     return
                 }
+                izvori = if (nacin == Podesavanja.NACIN_MIKROFON) MIKROFONI else INTERNI + MIKROFONI
                 Dnevnik.upisi(this, "Poziv počeo")
-                // Telefon prvo prebaci zvuk na slušalicu; snimač pokrenut odmah
-                // na nekim Samsungovim modelima dobija samo tišinu.
-                glavna.postDelayed(pokreni, 1_000)
+                // Obaveštenje odmah drži proces živim, pre nego što izvor proradi.
+                prikaziObavestenje()
+                pocni(0)
             }
             TelephonyManager.CALL_STATE_IDLE -> {
-                glavna.removeCallbacks(pokreni)
                 if (pocetak != 0L) Dnevnik.upisi(this, "Poziv završen")
                 zavrsi()
                 pocetak = 0L
@@ -117,8 +118,6 @@ class SnimacServis : AccessibilityService() {
         }
     }
 
-    private val pokreni = Runnable { pocni(0) }
-
     /** Pokreće snimač sa prvim izvorom zvuka koji radi, počevši od izvora [od]. */
     private fun pocni(od: Int) {
         if (snimac != null) return
@@ -127,8 +126,8 @@ class SnimacServis : AccessibilityService() {
             return
         }
         val folder = folderSnimaka(this).apply { mkdirs() }
-        for (i in od until IZVORI.size) {
-            val (izvor, naziv) = IZVORI[i]
+        for (i in od until izvori.size) {
+            val (izvor, naziv) = izvori[i]
             val izlaz = File(folder, "poziv_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(pocetak)) + "_$i.aac")
             val r = MediaRecorder(this)
             try {
@@ -147,7 +146,6 @@ class SnimacServis : AccessibilityService() {
                 izvorIndeks = i
                 najjace = 0
                 merenja = 0
-                prikaziObavestenje()
                 Dnevnik.upisi(this, "Snimanje počelo: $naziv")
                 glavna.postDelayed(meri, 500)
                 return
@@ -158,20 +156,21 @@ class SnimacServis : AccessibilityService() {
             }
         }
         Dnevnik.upisi(this, "Nijedan izvor zvuka nije pokrenut, poziv se ne snima")
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
     }
 
     /**
      * Android tokom poziva često daje aplikaciji samo nule umesto zvuka.
-     * Ako izvor posle 4 sekunde nije dao ni šum, probava se sledeći.
+     * Ako izvor posle 3 sekunde nije dao ni šum, probava se sledeći.
      */
     private val meri: Runnable = object : Runnable {
         override fun run() {
             val r = snimac ?: return
             najjace = maxOf(najjace, runCatching { r.maxAmplitude }.getOrDefault(0))
             merenja++
-            if (merenja == 8 && najjace == 0) {
-                val naziv = IZVORI[izvorIndeks].second
-                if (izvorIndeks + 1 < IZVORI.size) {
+            if (merenja == 6 && najjace == 0) {
+                val naziv = izvori[izvorIndeks].second
+                if (izvorIndeks + 1 < izvori.size) {
                     Dnevnik.upisi(this@SnimacServis, "$naziv daje samo tišinu, probam sledeći izvor")
                     val sledeci = izvorIndeks + 1
                     odbaci()
@@ -197,13 +196,13 @@ class SnimacServis : AccessibilityService() {
 
     private fun zavrsi() {
         glavna.removeCallbacks(meri)
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         val r = snimac ?: return
         snimac = null
         val f = fajl
         fajl = null
         val ispravno = runCatching { r.stop() }.isSuccess
         runCatching { r.release() }
-        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         if (f == null) return
         if (!ispravno || f.length() < 2_000) {
             Dnevnik.upisi(this, "Snimak je prazan (${f.length()} B), obrisan")
@@ -263,12 +262,18 @@ class SnimacServis : AccessibilityService() {
 
     companion object {
         /**
-         * Redosled izvora: VOICE_CALL se ne nudi jer ga Android daje samo
-         * sistemskim aplikacijama, a na nekim telefonima „uspe“ i snima tišinu.
-         * VOICE_COMMUNICATION je poslednji jer poništavanje eha briše
-         * sagovornika sa zvučnika.
+         * Zvuk poziva iz telefona, oba smera pa samo sagovornik. Android ga
+         * zvanično daje samo sistemskim aplikacijama; neki telefoni ga ipak
+         * puste servisu pristupačnosti, a drugi „uspeju“ i daju tišinu, koju
+         * merenje jačine prepozna i pređe na mikrofon.
          */
-        private val IZVORI = listOf(
+        private val INTERNI = listOf(
+            MediaRecorder.AudioSource.VOICE_CALL to "Zvuk poziva (oba smera)",
+            MediaRecorder.AudioSource.VOICE_DOWNLINK to "Zvuk poziva (sagovornik)",
+        )
+
+        /** VOICE_COMMUNICATION je poslednji jer poništavanje eha briše sagovornika sa zvučnika. */
+        private val MIKROFONI = listOf(
             MediaRecorder.AudioSource.MIC to "Mikrofon",
             MediaRecorder.AudioSource.VOICE_RECOGNITION to "Mikrofon bez obrade",
             MediaRecorder.AudioSource.CAMCORDER to "Mikrofon kamere",

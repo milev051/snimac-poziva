@@ -12,10 +12,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.telecom.TelecomManager
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -26,7 +29,6 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.DynamicColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import java.io.File
@@ -315,8 +317,32 @@ class MainActivity : AppCompatActivity() {
             poruka("Sačuvano")
         })
 
-        s.addView(prekidac("Snimaj pozive sam (mikrofon)", pod.snimajSam) { pod.snimajSam = it; osveziDozvole() })
-        s.addView(telo("Mikrofon jasno čuje tebe, a sagovornika samo kad je uključen zvučnik. Ako telefon ima svoj snimač poziva, on snima oba smera i aplikacija njegove snimke pronalazi sama; tada ovo možeš isključiti."))
+        s.addView(TextView(this).apply {
+            text = "Način snimanja"
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, dp(12), 0, 0)
+        })
+        val nacini = listOf(
+            Podesavanja.NACIN_INTERNO to "Zvuk poziva iz telefona, pa mikrofon",
+            Podesavanja.NACIN_MIKROFON to "Samo mikrofon",
+            Podesavanja.NACIN_TELEFON to "Samo ugrađeno snimanje telefona",
+        )
+        s.addView(RadioGroup(this).apply {
+            nacini.forEach { (kljuc, opis) ->
+                addView(RadioButton(context).apply {
+                    id = View.generateViewId()
+                    text = opis
+                    minHeight = dp(48)
+                    isChecked = pod.nacin == kljuc
+                    setOnCheckedChangeListener { _, c -> if (c) { pod.nacin = kljuc; osveziDozvole() } }
+                })
+            }
+        })
+        s.addView(telo("Zvuk poziva čuje oba smera, ali ga mnogi telefoni ne puštaju aplikacijama; tada snimanje samo pređe na mikrofon. Mikrofon jasno čuje tebe, a sagovornika samo na zvučniku. Ugrađeno snimanje (Samsung: Telefon → ⋮ → Podešavanja → Snimanje poziva) čuje oba smera, a aplikacija njegove snimke pronalazi sama."))
+        s.addView(dugme("Otvori podešavanja poziva u Telefonu", tonal = true) {
+            runCatching { startActivity(Intent(TelecomManager.ACTION_SHOW_CALL_SETTINGS)) }
+                .onFailure { poruka("Telefon ne nudi ova podešavanja spolja") }
+        })
         s.addView(telo("Prepis kreće samo na dugme „Prepiši“ kod poziva. Bez interneta čeka i kreće čim se veza vrati."))
         return kartica
     }
@@ -448,13 +474,6 @@ class MainActivity : AppCompatActivity() {
         dugmad.forEach {
             addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
         }
-    }
-
-    private fun prekidac(t: String, pocetno: Boolean, promena: (Boolean) -> Unit) = MaterialSwitch(this).apply {
-        text = t
-        isChecked = pocetno
-        minHeight = dp(48)
-        setOnCheckedChangeListener { _, c -> promena(c) }
     }
 
     private fun poruka(t: String) = Toast.makeText(this, t, Toast.LENGTH_SHORT).show()
